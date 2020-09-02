@@ -11,79 +11,65 @@ import subprocess
 import ctypes
 import toml
 import psutil
-import winreg
-import keyring
 from http import client
-from hashlib import sha256, sha512
+from hashlib import sha512
 from binascii import hexlify
 from base64 import b64encode
 from json import loads, dumps
-from subprocess import Popen
+from subprocess import run, Popen, PIPE
 from io import StringIO
 from pathlib import Path
 from getpass import getpass
-from sys import argv
 
 
 def get_login_passport():
-    # Get the motherboard UUID
-    uuid = str(subprocess.check_output('wmic csproduct get uuid'))
-    uuid = uuid[uuid.find("\\n")+2 : -15]
-    # Get the operating system GUID
-    guid = winreg.QueryValueEx(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography"), "MachineGuid")[0]
+    # Get something unique (not important as far as I can tell)
+    cmd_result = run(['wmic', 'csproduct', 'get', 'uuid'], stdout=PIPE)
+    cmd_result_str = StringIO(cmd_result.stdout.decode('utf-8'))
 
-    # Generate a device ID from UUID and GUID.
-    device_id = hexlify(sha256(bytes(uuid + guid, 'utf-8')).digest()).decode('utf-8')
+    # skip the first line
 
-    # Ask the user for nexon account ID.
-    email = input("Nexon Account Email: ")
-    password = keyring.get_password('mabinogi', email)
-    if password:
-        password_found = True
-    else:
-        print("Password will be stored in Windows Credential Manager.")
-        password = input("Password: ")
+    cmd_result_str.readline()
 
-    # First HTTPS request.
-    password_sha512 = hexlify(sha512(bytes(password, 'utf-8')).digest()).decode('utf-8')
+    # Grab UUID
+    uuid = cmd_result_str.readline().strip()
+
+    # Ask for username/password.
+    username = input("Nexon Account Email: ")
+    password = getpass("Password: ")
+
+    # Immediately convert it.
+    password = hexlify(sha512(bytes(password, 'utf-8')).digest()).decode('utf-8')
+
+    # First request.
     headers = {
+        'User-Agent' : 'NexonLauncher.nxl-18.12.02.2-439-0880e92',
         'Content-Type': 'application/json'
     }
     body = {
-        'id': email,
-        'password': password_sha512,
+        'id': username,
+        'password': password,
         'auto_login': False,
         'client_id': '7853644408',
         'scope': 'us.launcher.all',
-        'device_id': device_id,
+        'device_id': uuid,
         'captcha_token': '0xDEADBEEF'
     }
-    connection = client.HTTPSConnection('www.nexon.com', 443)
-    connection.request('POST', '/account-webapi/login/launcher', body=dumps(body), headers=headers)
+    body_str = dumps(body)
+    connection = client.HTTPSConnection('accounts.nexon.net', 443)
+    connection.request('POST', '/account-webapi/login/launcher', body=body_str, headers=headers)
     response = loads(connection.getresponse().read().decode('utf-8'))
+    b64_token = b64encode(bytes(response['access_token'],'utf-8')).decode('utf-8')
 
-    # Check if the response successfully returned an access token.
-    if not 'access_token' in response:
-        print("Error: ", response)
-        os.system("pause")
-        sys.exit()
+    # Second request.
 
-    # If the password was not retrieved though keyring, we can save it now.
-    if not password_found:
-        keyring.set_password('mabinogi', email, password)
-    
-    # Unset the credentials. Never leave credentials lingering in memory.
-    email = None
-    password = None
-
-    # Second HTTPS request.
-    access_token_b64 = b64encode(bytes(response['access_token'], 'utf-8')).decode('utf-8')
     headers = {
+        'User-Agent': 'NexonLauncher.nxl-18.12.02.2-439-0880e92',
         'Cookie': 'nxtk=' + response['access_token'] + ';domain=.nexon.net;path=/;',
         'Authorization': 'bearer ' + access_token_b64
     }
     connection = client.HTTPSConnection('api.nexon.io', 443)
-    connection.request('GET', '/users/me/passport', headers=headers)
+    connection.request('GET', '/passport/v1/passport', headers=headers)
     response = loads(connection.getresponse().read().decode('utf-8'))
 
     # Return the login passport.
