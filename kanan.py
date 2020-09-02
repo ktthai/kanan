@@ -55,7 +55,8 @@ def get_login_passport():
         'auto_login': False,
         'client_id': '7853644408',
         'scope': 'us.launcher.all',
-        'device_id': device_id
+        'device_id': device_id,
+        'captcha_token': '0xDEADBEEF'
     }
     connection = client.HTTPSConnection('www.nexon.com', 443)
     connection.request('POST', '/account-webapi/login/launcher', body=dumps(body), headers=headers)
@@ -63,7 +64,7 @@ def get_login_passport():
 
     # Check if the response successfully returned an access token.
     if not 'access_token' in response:
-        print("Account credentials are invalid. Exiting.")
+        print("Error: ", response)
         os.system("pause")
         sys.exit()
 
